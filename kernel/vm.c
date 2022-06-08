@@ -432,3 +432,30 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
     return -1;
   }
 }
+
+// print the 3 level pagetable
+void vmprint(pagetable_t pagetable) 
+{
+  // vmprint times(0, 1, 2)
+  static int num = 0;
+  if (num == 0)
+    printf("page table %p\n", pagetable);
+  for (int i = 0; i < 512; i++) {
+    pte_t pte = pagetable[i];
+    if (pte & PTE_V) {
+      for(int j=0; j<=num; ++j) {
+        printf(" ..");
+      }
+      if (num != 2) {
+        printf("%d: pte %p pa %p\n", i, pte, PTE2PA(pte));
+        uint64 child = PTE2PA(pte);
+        ++num;
+        vmprint((pagetable_t)child);
+        --num;
+      } else {
+        // this is leaf, do not deep in
+        printf("%d: pte %p pa %p\n", i, pte, PTE2PA(pte));
+      }
+    }
+  }
+}
