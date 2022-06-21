@@ -10,11 +10,41 @@ struct spinlock tickslock;
 uint ticks;
 
 extern char trampoline[], uservec[], userret[];
+extern uint8 page_count[];
 
 // in kernelvec.S, calls kerneltrap().
 void kernelvec();
 
 extern int devintr();
+
+int cowfault(pagetable_t pagetable, uint64 rval) {
+  if (rval >= MAXVA) {
+    return -1;
+  }
+  pte_t* pte = walk(pagetable, rval, 0);
+  if (pte == 0 || !(*pte & PTE_COW)) {
+    printf("not cow page\n");
+    return -1;
+  }
+  // more than two reference
+  if(page_count[PTE2PA(*pte)/PGSIZE] >= 2) {
+    page_count[PTE2PA(*pte)/PGSIZE] --;
+    char* mem;
+    if ((mem = kalloc()) == 0) {
+      return -1;
+    }
+    memmove(mem, (char*)PTE2PA(*pte), PGSIZE);
+    // set pte to new physic mem page
+    uint flag = PTE_FLAGS(*pte) | PTE_W;
+    flag = flag & (~PTE_COW);
+    (*pte) = PA2PTE((uint64)mem) | flag;
+  } else {
+    // only one reference, add PTE_W to flag
+    (*pte) |= PTE_W;
+    (*pte) &= (~PTE_COW);
+  }
+  return 0;
+}
 
 void
 trapinit(void)
@@ -67,6 +97,13 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
+  } else if (r_scause() == 15) {
+    // page fault (write)
+    struct proc* p = myproc();
+    if (cowfault(p->pagetable, r_stval()) < 0) {
+      p->killed = 1;
+      exit(-1);
+    }
   } else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
